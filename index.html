@@ -140,7 +140,7 @@
            // if (!query) return;
 
             try {
-                const res = await fetch(`http://localhost:8085/search?q=${encodeURIComponent(query)}&range=${encodeURIComponent(range)}`);
+                const res = await fetch(`http://localhost:8090/search?q=${encodeURIComponent(query)}&range=${encodeURIComponent(range)}`);
                 const data = await res.json();
                 lastSearchResults = data;
                 renderList();

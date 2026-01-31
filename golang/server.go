@@ -101,32 +101,36 @@ func main() {
 		if strings.TrimSpace(query) == "" {
 			// 検索ワードがない場合：日付条件だけで全件（最新1000件）取得
 			finalQuery := `
-        SELECT rowid, subject, body, date, is_important, has_urgent 
+        SELECT rowid, subject, body, date, is_important, has_urgent, COALESCE(cal_date, ''), COALESCE(location, '')
         FROM mails 
         WHERE date >= ? 
         ORDER BY has_urgent DESC, is_important DESC, date DESC 
         LIMIT 1000`
+			//finalQuery = `SELECT rowid, subject, body, date, is_important, has_urgent , COALESCE(cal_date, ''), COALESCE(location, '') FROM mails`
 			rows, err = db.Query(finalQuery, cutoffStr)
+			if err != nil {
+				log.Printf("query error: %s\n", err)
+			}
 		} else {
 			// 検索ワードがある場合：日付 ＋ キーワード
 			finalQuery := `
-        SELECT rowid, subject, body, date, is_important, has_urgent 
+        SELECT rowid, subject, body, date, is_important, has_urgent, COALESCE(cal_date, ''), COALESCE(location, '')
         FROM mails 
-        WHERE date >= ? AND mails MATCH ? 
+        WHERE date >= ? mails MATCH ? 
         ORDER BY has_urgent DESC, is_important DESC, date DESC 
         LIMIT 1000`
 			rows, err = db.Query(finalQuery, cutoffStr, ftsQuery)
+			if err != nil {
+				log.Printf("query error: %s\n", err)
+			}
 		}
+		//WHERE date >= ? AND mails MATCH ?
 
-		/*
-			finalQuery := `
-			    SELECT rowid, subject, body, date, is_important, has_urgent
-			    FROM mails
-			    WHERE mails MATCH ? AND date >= ?
-			    ORDER BY has_urgent DESC, is_important DESC, date DESC
-			    LIMIT 1000`
-			rows, err := db.Query(finalQuery, ftsQuery, cutoffStr) // 2つの ? に値を渡す
-		*/
+		var count, c2 int
+		db.QueryRow("SELECT COUNT(*) FROM mails", "ieice").Scan(&c2)
+		db.QueryRow("SELECT COUNT(*) FROM mails WHERE is_important = 1").Scan(&count)
+		fmt.Println("select all 直後の件数:", c2)
+		fmt.Println("select 直後の件数:", count)
 
 		if err != nil {
 			json.NewEncoder(w).Encode([]SearchResult{})
@@ -137,9 +141,13 @@ func main() {
 		results := []SearchResult{}
 		for rows.Next() {
 			var res SearchResult
-			rows.Scan(&res.ID, &res.Subject, &res.Body, &res.Date, &res.IsImportant, &res.HasUrgent, &res.calDate, &res.location)
+			err = rows.Scan(&res.ID, &res.Subject, &res.Body, &res.Date, &res.IsImportant, &res.HasUrgent, &res.calDate, &res.location)
 			results = append(results, res)
+			if err != nil {
+				log.Printf("Error: %s\n", err)
+			}
 		}
+		log.Printf("Len: %d\n", len(results))
 		json.NewEncoder(w).Encode(results)
 	})
 
@@ -242,8 +250,11 @@ func processFile(db *sql.DB, path string, info os.FileInfo) {
 	db.Exec("DELETE FROM mails WHERE path = ?", path)
 	tx, _ := db.Begin()
 	indexMboxFile(tx, path)
-	tx.Commit()
-	db.Exec("INSERT OR REPLACE INTO file_cache VALUES (?, ?, ?)", path, info.ModTime().Unix(), info.Size())
+	err = tx.Commit()
+	if err != nil {
+		log.Printf("commit failed %s\n", err)
+	}
+	_, err = db.Exec("INSERT OR REPLACE INTO file_cache VALUES (?, ?, ?)", path, info.ModTime().Unix(), info.Size())
 }
 
 func indexMboxFile(tx *sql.Tx, filePath string) {
@@ -271,9 +282,12 @@ func indexMboxFile(tx *sql.Tx, filePath string) {
 					}
 
 					imp, urg, calDate, location := analyzeMail(env)
-					tx.Exec(`INSERT INTO mails(subject, body, path, date, is_important, has_urgent, from_addr, calDate, location) 
-						VALUES (?, ?, ?, ?, ?, ?, ?)`,
+					_, err = tx.Exec(`INSERT INTO mails(subject, body, path, date, is_important, has_urgent, from_addr, cal_date, location)
+							VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 						env.GetHeader("Subject"), env.Text, filePath, dateForDB, imp, urg, env.GetHeader("From"), calDate, location)
+					if err != nil {
+						log.Printf("exec error: %s", err)
+					}
 				}
 				currentMail.Reset()
 			}
@@ -336,49 +350,6 @@ func analyzeMail(env *enmime.Envelope) (isImp int, hasUrg int, calDate string, l
 			}
 		}
 	}
-
-	return
-}
-
-func analyzeMail_old(env *enmime.Envelope) (isImp int, hasUrg int, calDate string, location string) {
-	sub, body, from := env.GetHeader("Subject"), env.Text, env.GetHeader("From")
-	vips := []string{"boss@example.com", "@important.jp"}
-	for _, v := range vips {
-		if strings.Contains(strings.ToLower(from), v) {
-			isImp = 1
-		}
-	}
-	keywords := []string{"重要", "緊急", "締切", "確定"}
-	for _, k := range keywords {
-		if strings.Contains(sub, k) {
-			isImp = 1
-		}
-	}
-
-	now := time.Now()
-	oneWeek := now.Add(7 * 24 * time.Hour)
-	re := regexp.MustCompile(`(\d{1,2})月(\d{1,2})日`)
-	matches := re.FindAllStringSubmatch(body, -1)
-	for _, m := range matches {
-		mo, _ := strconv.Atoi(m[1])
-		d, _ := strconv.Atoi(m[2])
-		event := time.Date(now.Year(), time.Month(mo), d, 0, 0, 0, 0, time.Local)
-		if event.After(now.AddDate(0, 0, -1)) && event.Before(oneWeek) {
-			hasUrg = 1
-			break
-		}
-	}
-
-	// 日時パターンの抽出 (例: 1月30日 15:00)
-	reDate := regexp.MustCompile(`(\d{1,2}月\d{1,2}日)\s*(\d{1,2}[:時]\d{0,2}分?)?`)
-	if reDate.MatchString(body) {
-		hasUrg = 1 // 日付があればフラグを立てる
-	}
-
-	// 場所パターンの抽出 (例: 第1会議室, 〇〇ビル, 3F)
-	// 日本語の特性上、100%は難しいですが、代表的なキーワードで拾います
-	reLocation := regexp.MustCompile(`(場所|会場|集合)[:：]\s*([^\n\r]+)|([^\n\r]+(?:会議室|ホール|センター|ビル|スタジオ))`)
-	_ = reLocation.FindString(body) // 今回はフラグ判定のみ利用
 
 	return
 }
