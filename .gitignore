@@ -137,3 +137,13 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# SQLiteのデータベース本体を除外
+*.sqlite3
+*.db
+
+# SQLiteが一時的に作成するジャーナル・作業用ファイルも除外
+*.db-shm
+*.db-wal
+*.db-journal
+
