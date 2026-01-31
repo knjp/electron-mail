@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Mail Search Engine</title>
+    <style>
+        /* 全体のレイアウト */
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            display: flex; 
+            height: 100vh; 
+            margin: 0; 
+            overflow: hidden; /* ブラウザ全体のスクロールを禁止 */
+        }
+
+        /* 左側ペイン（検索窓 + リスト） */
+        #sidebar { 
+            width: 350px; 
+            border-right: 1px solid #ccc; 
+            display: flex; 
+            flex-direction: column; /* 縦に並べる */
+            background: #f8f9fa;
+        }
+
+        /* 検索窓を固定するエリア */
+        #search-container { 
+            padding: 15px; 
+            background: #fff; 
+            border-bottom: 1px solid #ddd;
+            flex-shrink: 0; /* 高さを削られないように固定 */
+        }
+
+        input { 
+            width: 100%; 
+            padding: 10px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px;
+            box-sizing: border-box; 
+        }
+
+        /* リスト部分だけをスクロールさせる */
+        #results { 
+            flex: 1; /* 残りの高さをすべて占有 */
+            overflow-y: auto; /* ここだけスクロールを許可 */
+            background: #fff;
+        }
+
+        /* 右側ペイン（閲覧エリア） */
+        #viewerold { 
+            flex: 1; 
+            padding: 30px; 
+            overflow-y: auto; 
+            background: white;
+            line-height: 1.6;
+        }
+        #viewer {
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+            background: white;
+            /* これを追加：改行と空白を保持し、端で折り返す */
+            white-space: pre-wrap; 
+            word-wrap: break-word;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace; /* 等幅フォントにするとよりメールらしい */
+            line-height: 1.5;
+        }
+        /* 各アイテムのスタイル */
+        .item { 
+            padding: 12px 15px; 
+            border-bottom: 1px solid #eee; 
+            cursor: pointer; 
+            transition: background 0.2s;
+        }
+        .item:hover { background: #e9ecef; }
+        .item.selected {
+            background-color: #d1e7ff; /* 爽やかな青色 */
+            border-left: 5px solid #007bff; /* 左端にアクセントの青線 */
+        }
+        .date-highlight { background: #fff9c4; font-weight: bold; border-radius: 3px; padding: 0 4px; }
+        small { color: #666; }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <!-- 固定された検索エリア -->
+        <div id="search-container">
+            <div id="progress-text" style="font-size: 10px; color: #007bff; margin-bottom: 5px; height: 15px; overflow: hidden;">
+                待機中...
+            </div>
+            <input type="text" id="search" placeholder="キーワードを入力..." oninput="doSearch()">
+            <select id="date-range" onchange="doSearch()">
+                <option value="1w" selected>今週</option>
+                <option value="1m">1月以内</option>
+                <option value="6m">6月以内</option>
+                <option value="1y">1年以内</option>
+                <option value="5y">5年以内</option>
+                <option value="10y">10年以内</option>
+                <option value="all">すべて</option>
+            </select>
+        </div>
+        <!-- スクロールするリストエリア -->
+        <div id="results"></div>
+    </div>
+
+    <!-- 右側：本文表示エリア -->
+    <div id="viewer">
+        <div style="color: #999; text-align: center; margin-top: 50px;">メールを選択してください</div>
+    </div>
+
+    <script>
+        // ブラウザ画面の準備ができたら実行
+        document.addEventListener('DOMContentLoaded', () => {
+            const rangeSelect = document.getElementById('date-range');
+            if (rangeSelect) {
+                rangeSelect.value = "1w"; // 1週間以内にセット
+                doSearch(); // 検索実行
+            }
+        });
+
+    // SSE で Go からの進捗を受信
+        const evtSource = new EventSource("http://localhost:8085/progress");
+        evtSource.onmessage = function(event) {
+            document.getElementById('progress-text').innerText = event.data;
+            if (event.data.includes("完了")) {
+                setTimeout(() => {
+                    document.getElementById('progress-text').innerText = "";
+                }, 3000);
+            }
+        };
+    </script>
+
+    <script>
+        let selectedMailId = null; // 現在選択中のメールIDを保持
+        let lastSearchResults = [];
+        window.currentMails = []; 
+
+        async function doSearch() {
+            const query = document.getElementById('search').value;
+            const range = document.getElementById('date-range').value;
+           // if (!query) return;
+
+            try {
+                const res = await fetch(`http://localhost:8085/search?q=${encodeURIComponent(query)}&range=${encodeURIComponent(range)}`);
+                const data = await res.json();
+                lastSearchResults = data;
+                renderList();
+                
+                const html = data.map(m => `
+                    <div class="item" onclick='viewMail(${JSON.stringify(m).replace(/'/g, "&apos;")})'>
+                        <div style="display: flex; align-items: center;">
+                            ${m.has_urgent ? '<span title="直近予定" style="margin-right:5px;">🔥</span>' : ''}
+                            ${m.is_important ? '<span title="重要" style="margin-right:5px;">⭐</span>' : ''}
+                            <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                <strong>${m.subject || '(無題)'}</strong>
+                            </div>
+                        </div>
+                        <small style="color: #888;">${m.date}</small>
+                    </div>
+
+                `).join('');
+                document.getElementById('results').innerHTML = html;
+            } catch (e) { console.error(e); }
+        }
+
+        function viewMail22(mail) {
+            document.getElementById('viewer').scrollTop = 0;
+            // 日付情報のハイライト（日程自動生成の第一歩）
+            const highlightedBody = mail.body.replace(/(\d{1,2}月\d{1,2}日)/g, '<span class="date-highlight">📅 $1</span>');
+            document.getElementById('viewer').innerHTML = `<h2>${mail.subject}</h2><hr>${highlightedBody}`;
+        }
+
+
+        function viewMail33(mail) {
+            selectedMailId = mail.id; // 選択されたIDを保存
+
+            // スクロール位置のリセット
+            document.getElementById('viewer').scrollTop = 0;
+
+            // プレビュー表示
+            const highlightedBody = mail.body.replace(/(\d{1,2}月\d{1,2}日)/g, '<span class="date-highlight">📅 $1</span>');
+            document.getElementById('viewer').innerHTML = `<h2>${mail.subject}</h2><hr>${highlightedBody}`;
+
+            // ★重要：リスト表示を更新して色を塗り替える
+            renderList(); 
+        }
+
+
+        function renderList() {
+            const list = document.getElementById('results');
+            if (!list) return;
+        
+            list.innerHTML = lastSearchResults.map(m => `
+                <div class="item ${m.id === selectedMailId ? 'selected' : ''}" 
+                     onclick='viewMail(${JSON.stringify(m).replace(/'/g, "&apos;")})'>
+                    <div style="display: flex; align-items: center;">
+                        <!-- ここで Go から届いたフラグを再チェック -->
+                        ${m.has_urgent ? '<span title="直近予定" style="margin-right:5px;">🔥</span>' : ''}
+                        ${m.is_important ? '<span title="重要" style="margin-right:5px;">⭐</span>' : ''}
+                        <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            <strong>${m.subject || '(無題)'}</strong>
+                        </div>
+                    </div>
+                    <small style="color: #888;">${m.date}</small>
+                </div>
+            `).join('');
+        }
+
+        function viewMail(mail) {
+            selectedMailId = mail.id;
+            document.getElementById('viewer').scrollTop = 0;
+        
+            // 1. 本文から場所を特定（簡易版）
+            const locMatch = mail.body.match(/(場所|会場|集合)[:：]\s*([^\n\r]+)|([^\n\r]+(?:会議室|ビル|スタジオ))/);
+            const location = locMatch ? locMatch[0].replace(/場所|会場|集合|[:：]/g, "").trim() : "";
+        
+            // 2. 本文内の日時をボタン化
+            const highlightedBody = mail.body.replace(/(\d{1,2}月\d{1,2}日(\s*\d{1,2}[:時]\d{0,2}分?)?)/g, (match) => {
+                return `<button class="cal-btn" onclick="openCalendar('${match}', '${location}', '${mail.subject}')">📅 ${match} をカレンダー登録</button>`;
+            });
+        
+            document.getElementById('viewer').innerHTML = `
+                <h2 style="margin:0;">${mail.subject}</h2>
+                <div style="color:gray; font-size:0.8em; margin-bottom:15px;">${mail.date}</div>
+                <hr>
+                <div style="white-space: pre-wrap;">${highlightedBody}</div>
+            `;
+            renderList();
+        }
+        
+function openCalendar(dateStr, location, subject) {
+    // ドメインの後に必ず /calendar/render を入れる必要があります
+    const baseUrl = "https://www.google.com/calendar/render";
+    
+    const params = new URLSearchParams({
+        action: 'TEMPLATE',
+        text: subject.toString().trim(),
+        location: (location || "").toString().trim(),
+        dates: calDate ? `${calDate}/${calDate}` : "",
+        details: `日時: ${dateStr}\n(メールから自動抽出)`
+    });
+
+    // ここで結合
+    const finalUrl = `${baseUrl}?${params.toString()}`;
+    
+    console.log("最終URL:", finalUrl);
+
+    const { shell } = require('electron');
+    shell.openExternal(finalUrl);
+}
+
+
+   </script>
+</body>
+</html>
