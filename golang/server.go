@@ -116,7 +116,7 @@ func main() {
 			finalQuery := `
         SELECT rowid, subject, body, date, is_important, has_urgent, COALESCE(cal_date, ''), COALESCE(location, '')
         FROM mails 
-        WHERE date >= ? mails MATCH ? 
+        WHERE date >= ? AND mails MATCH ? 
         ORDER BY has_urgent DESC, is_important DESC, date DESC 
         LIMIT 1000`
 			rows, err = db.Query(finalQuery, cutoffStr, ftsQuery)
@@ -124,13 +124,6 @@ func main() {
 				log.Printf("query error: %s\n", err)
 			}
 		}
-		//WHERE date >= ? AND mails MATCH ?
-
-		var count, c2 int
-		db.QueryRow("SELECT COUNT(*) FROM mails", "ieice").Scan(&c2)
-		db.QueryRow("SELECT COUNT(*) FROM mails WHERE is_important = 1").Scan(&count)
-		fmt.Println("select all 直後の件数:", c2)
-		fmt.Println("select 直後の件数:", count)
 
 		if err != nil {
 			json.NewEncoder(w).Encode([]SearchResult{})
@@ -147,7 +140,6 @@ func main() {
 				log.Printf("Error: %s\n", err)
 			}
 		}
-		log.Printf("Len: %d\n", len(results))
 		json.NewEncoder(w).Encode(results)
 	})
 
