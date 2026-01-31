@@ -118,7 +118,7 @@
         });
 
     // SSE で Go からの進捗を受信
-        const evtSource = new EventSource("http://localhost:8085/progress");
+        const evtSource = new EventSource("http://localhost:8090/progress");
         evtSource.onmessage = function(event) {
             document.getElementById('progress-text').innerText = event.data;
             if (event.data.includes("完了")) {

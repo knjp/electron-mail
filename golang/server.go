@@ -155,13 +155,13 @@ func main() {
 		}
 	})
 
-	log.Println("Backend API started at :8085")
-	log.Fatal(http.ListenAndServe(":8085", nil))
+	log.Println("Backend API started at :8090")
+	log.Fatal(http.ListenAndServe(":8090", nil))
 }
 
 func isAllowed(path string) bool {
 	//targets := []string{"gmail-4.com", "office365", "Local Folders"}
-	targets := []string{"office365"}
+	targets := []string{"gmail"}
 	lowerPath := strings.ToLower(path)
 	for _, t := range targets {
 		if strings.Contains(lowerPath, strings.ToLower(t)) {
