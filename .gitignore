@@ -147,3 +147,9 @@ vite.config.ts.timestamp-*
 *.db-wal
 *.db-journal
 
+# my-dir フォルダ自体は無視せず、中身だけを無視する
+Mailfolders/*
+
+# ただし、後述する .gitkeep だけは例外として管理に含める
+!Mailfolders/.gitkeep
+
